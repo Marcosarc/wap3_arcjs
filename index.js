@@ -6,6 +6,7 @@ const http = require('http');
 const socketIo = require('socket.io');
 const axios = require('axios');
 const PQueue = require('p-queue');
+const chromium = require('chrome-aws-lambda');
 
 const app = express();
 const server = http.createServer(app);
@@ -20,7 +21,8 @@ let isInitializing = false;
 const queue = new PQueue.default({ concurrency: 3 });
 
 app.get('/', (_, res) => {
-    res.send(`<!DOCTYPE html>
+    res.send(`
+        <!DOCTYPE html>
         <html lang="es">
         <head>
             <meta charset="UTF-8">
@@ -56,10 +58,6 @@ app.get('/', (_, res) => {
                 socket.on('qr', (qrCode) => {
                     status.innerHTML = '<h2>Escanea el código QR con tu WhatsApp para iniciar sesión</h2>';
                     qrContainer.innerHTML = '<img src="' + qrCode + '" alt="QR Code" />';
-                });
-
-                socket.on('qr_error', (errorMessage) => {
-                    status.innerHTML = '<h2>' + errorMessage + '</h2>';
                 });
 
                 function initializeWhatsApp() {
@@ -100,29 +98,16 @@ app.get('/initialize', async (req, res) => {
 
         client = new Client({
             puppeteer: {
-                headless: true,
-                args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-accelerated-2d-canvas', '--no-first-run', '--no-zygote', '--single-process', '--disable-gpu']
+                executablePath: await chromium.executablePath,
+                args: chromium.args,
+                headless: true
             },
             session: null
         });
 
-        // Escucha el evento de generación del QR
         client.on('qr', async (qr) => {
-            try {
-                qrCodeData = await qrcode.toDataURL(qr);
-                
-                // Validación del código QR
-                if (qrCodeData) {
-                    console.log('Código QR generado:', qrCodeData);
-                    io.emit('qr', qrCodeData);
-                } else {
-                    console.error('Error: El código QR es indefinido o vacío.');
-                    io.emit('qr_error', 'No se pudo generar el código QR. Intenta nuevamente.');
-                }
-            } catch (error) {
-                console.error('Error generando código QR:', error);
-                io.emit('qr_error', 'Hubo un error al generar el código QR. Por favor, inténtalo de nuevo.');
-            }
+            qrCodeData = await qrcode.toDataURL(qr);
+            io.emit('qr', qrCodeData);
         });
 
         client.on('ready', () => {
@@ -232,5 +217,5 @@ app.get('/statusinstancias', (req, res) => {
 });
 
 server.listen(port, () => {
-    console.log(`Servidor API corriendo en http://localhost:${port}`);
+    console.log(`Servidor escuchando en el puerto ${port}`);
 });
