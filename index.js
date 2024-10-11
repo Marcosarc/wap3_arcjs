@@ -55,6 +55,10 @@ app.get('/', (_, res) => {
                             if (data.qr) {
                                 showQR(data.qr);
                             }
+                        })
+                        .catch(error => {
+                            console.error('Error:', error);
+                            updateStatus('Error al inicializar WhatsApp');
                         });
                 }
 
@@ -87,6 +91,56 @@ app.get('/', (_, res) => {
     `);
 });
 
+async function initializeWhatsAppClient(retries = 3) {
+    for (let i = 0; i < retries; i++) {
+        try {
+            console.log(`Intento de inicialización ${i + 1} de ${retries}`);
+            console.log('Node version:', process.version);
+            console.log('Puppeteer executable path:', process.env.PUPPETEER_EXECUTABLE_PATH);
+            console.log('Chrome AWS Lambda path:', await chromium.executablePath);
+
+            client = new Client({
+                puppeteer: {
+                    executablePath: await chromium.executablePath,
+                    args: [...chromium.args, '--no-sandbox', '--disable-setuid-sandbox'],
+                    defaultViewport: chromium.defaultViewport,
+                    headless: chromium.headless,
+                },
+                session: null
+            });
+
+            client.on('qr', async (qr) => {
+                console.log('Código QR recibido');
+                qrCodeData = await qrcode.toDataURL(qr);
+            });
+
+            client.on('ready', () => {
+                console.log('Cliente WhatsApp listo');
+                isClientReady = true;
+                qrCodeData = null;
+            });
+
+            client.on('auth_failure', msg => {
+                console.error('Autenticación fallida', msg);
+            });
+
+            client.on('disconnected', (reason) => {
+                console.log('Cliente desconectado', reason);
+                isClientReady = false;
+            });
+
+            await client.initialize();
+            console.log('Cliente inicializado con éxito');
+            return true;
+        } catch (error) {
+            console.error(`Error en el intento ${i + 1}:`, error);
+            if (i === retries - 1) throw error;
+            await new Promise(resolve => setTimeout(resolve, 5000)); // Espera 5 segundos antes de reintentar
+        }
+    }
+    return false;
+}
+
 app.get('/initialize', async (req, res) => {
     if (isInitializing || isClientReady) {
         await closeWhatsAppSession();
@@ -97,48 +151,20 @@ app.get('/initialize', async (req, res) => {
     qrCodeData = null;
 
     try {
-        console.log('Iniciando cliente de WhatsApp...');
-        client = new Client({
-            puppeteer: {
-                executablePath: await chromium.executablePath,
-                args: [...chromium.args, '--no-sandbox'],
-                defaultViewport: chromium.defaultViewport,
-                headless: chromium.headless,
-            },
-            session: null
-        });
-
-        console.log('Cliente creado, configurando eventos...');
-
-        client.on('qr', async (qr) => {
-            console.log('Código QR recibido');
-            qrCodeData = await qrcode.toDataURL(qr);
-            res.json({ message: 'Escanea el código QR con tu WhatsApp para iniciar sesión', qr: qrCodeData });
-        });
-
-        client.on('ready', () => {
-            console.log('Cliente WhatsApp listo');
-            isClientReady = true;
-            qrCodeData = null;
-        });
-
-        client.on('auth_failure', msg => {
-            console.error('Autenticación fallida', msg);
-        });
-
-        client.on('disconnected', (reason) => {
-            console.log('Cliente desconectado', reason);
-            isClientReady = false;
-        });
-
-        console.log('Iniciando cliente...');
-        await client.initialize();
-        console.log('Cliente inicializado');
-        res.json({ message: 'Cliente de WhatsApp inicializado.' });
+        const success = await initializeWhatsAppClient();
+        if (success) {
+            res.json({ message: 'Cliente de WhatsApp inicializado.', qr: qrCodeData });
+        } else {
+            res.status(500).json({ error: 'No se pudo inicializar el cliente después de múltiples intentos' });
+        }
     } catch (error) {
         console.error('Error detallado de inicialización:', error);
-		console.error('Stack trace:', error.stack);
-        res.status(500).json({ error: 'Error al inicializar el cliente de WhatsApp', details: error.message , stack: error.stack });
+        console.error('Stack trace:', error.stack);
+        res.status(500).json({ 
+            error: 'Error al inicializar el cliente de WhatsApp', 
+            details: error.message,
+            stack: error.stack
+        });
     } finally {
         isInitializing = false;
     }
