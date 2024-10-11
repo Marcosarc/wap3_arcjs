@@ -97,25 +97,29 @@ app.get('/initialize', async (req, res) => {
     qrCodeData = null;
 
     try {
+        console.log('Iniciando cliente de WhatsApp...');
         client = new Client({
             puppeteer: {
                 executablePath: await chromium.executablePath,
-                args: chromium.args,
+                args: [...chromium.args, '--no-sandbox'],
                 defaultViewport: chromium.defaultViewport,
                 headless: chromium.headless,
             },
             session: null
         });
 
+        console.log('Cliente creado, configurando eventos...');
+
         client.on('qr', async (qr) => {
+            console.log('Código QR recibido');
             qrCodeData = await qrcode.toDataURL(qr);
             res.json({ message: 'Escanea el código QR con tu WhatsApp para iniciar sesión', qr: qrCodeData });
         });
 
         client.on('ready', () => {
+            console.log('Cliente WhatsApp listo');
             isClientReady = true;
             qrCodeData = null;
-            console.log('Cliente WhatsApp listo');
         });
 
         client.on('auth_failure', msg => {
@@ -127,15 +131,14 @@ app.get('/initialize', async (req, res) => {
             isClientReady = false;
         });
 
-        client.on('message_create', message => {
-            if (message.body === '!ping') message.reply('pong');
-        });
-
+        console.log('Iniciando cliente...');
         await client.initialize();
+        console.log('Cliente inicializado');
         res.json({ message: 'Cliente de WhatsApp inicializado.' });
     } catch (error) {
-        console.error('Error de inicialización:', error.stack);
-        res.status(500).json({ error: 'Error al inicializar el cliente de WhatsApp' });
+        console.error('Error detallado de inicialización:', error);
+		console.error('Stack trace:', error.stack);
+        res.status(500).json({ error: 'Error al inicializar el cliente de WhatsApp', details: error.message , stack: error.stack });
     } finally {
         isInitializing = false;
     }
